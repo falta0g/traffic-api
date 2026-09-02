@@ -5,10 +5,10 @@ import requests
 from io import BytesIO
 from PIL import Image
 from datetime import datetime
+import json
 
 API_KEY = "AIzaSyDrc_p4i9gRvUBNPKmBvlSh_jcoBKLrhiU"
 
-# 長野道・中央道の計測範囲（塩尻北IC〜岡谷JCT〜諏訪IC）
 CENTER_LAT = 36.057
 CENTER_LNG = 138.045
 ZOOM = 11
@@ -51,14 +51,10 @@ def handler(request):
     distance_km = extract_red_distance(img_cv)
 
     result = {
-        "nagano": round(distance_km * 0.55, 2),  # 長野道の割合（経験値）
-        "chuo": round(distance_km * 0.45, 2),    # 中央道の割合（経験値）
+        "nagano": round(distance_km * 0.55, 2),
+        "chuo": round(distance_km * 0.45, 2),
         "total": round(distance_km, 2),
         "updated": datetime.now().strftime("%Y-%m-%d %H:%M")
     }
 
-    return {
-        "statusCode": 200,
-        "headers": {"Content-Type": "application/json"},
-        "body": result
-    }
+    return json.dumps(result)

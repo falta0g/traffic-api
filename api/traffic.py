@@ -6,9 +6,9 @@ from io import BytesIO
 from PIL import Image
 from datetime import datetime
 import json
+from http.server import BaseHTTPRequestHandler
 
 API_KEY = "AIzaSyDrc_p4i9gRvUBNPKmBvlSh_jcoBKLrhiU"
-
 CENTER_LAT = 36.057
 CENTER_LNG = 138.045
 ZOOM = 11
@@ -44,17 +44,21 @@ def extract_red_distance(img_cv):
     distance_km = (total_pixels * meters_per_pixel) / 1000
     return distance_km
 
-def handler(request):
-    img = get_map_image()
-    img_cv = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+class handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        img = get_map_image()
+        img_cv = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
 
-    distance_km = extract_red_distance(img_cv)
+        distance_km = extract_red_distance(img_cv)
 
-    result = {
-        "nagano": round(distance_km * 0.55, 2),
-        "chuo": round(distance_km * 0.45, 2),
-        "total": round(distance_km, 2),
-        "updated": datetime.now().strftime("%Y-%m-%d %H:%M")
-    }
+        result = {
+            "nagano": round(distance_km * 0.55, 2),
+            "chuo": round(distance_km * 0.45, 2),
+            "total": round(distance_km, 2),
+            "updated": datetime.now().strftime("%Y-%m-%d %H:%M")
+        }
 
-    return json.dumps(result)
+        self.send_response(200)
+        self.send_header('Content-type', 'application/json')
+        self.end_headers()
+        self.wfile.write(json.dumps(result).encode('utf-8'))

@@ -2,9 +2,7 @@ import os
 import sys
 import datetime
 import requests
-from flask import Flask, Response
-
-app = Flask(__name__)
+from http.server import BaseHTTPRequestHandler
 
 def calculate_traffic_estimate(jam_general_km=0.0, jam_nagano_km=0.0, jam_chuo_km=0.0):
     speed_general_normal = 40.0
@@ -86,7 +84,7 @@ def send_line_push(text_content):
     user_id = os.environ.get("LINE_USER_ID")
     
     if not token or not user_id:
-        return "LINE token or user ID is missing in environment variables."
+        return "LINE token or user ID is missing."
         
     url = "https://api.line.me/v2/bot/message/push"
     headers = {
@@ -105,13 +103,19 @@ def send_line_push(text_content):
         return f"LINE push error: {str(e)}"
 
 
-@app.route('/', defaults={'path': ''})
-@app.route('/<path:path>')
-def main(path):
-    try:
-        msg = calculate_traffic_estimate(jam_general_km=3.0, jam_nagano_km=6.0, jam_chuo_km=2.0)
-        line_status = send_line_push(msg)
-        body_text = f"{msg}\n\n[Status]: {line_status}"
-        return Response(body_text, status=200, mimetype='text/plain; charset=utf-8')
-    except Exception as e:
-        return Response(f"Internal Error: {str(e)}", status=500, mimetype='text/plain; charset=utf-8')
+class handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        try:
+            msg = calculate_traffic_estimate(jam_general_km=3.0, jam_nagano_km=6.0, jam_chuo_km=2.0)
+            line_status = send_line_push(msg)
+            body_text = f"{msg}\n\n[Status]: {line_status}"
+            
+            self.send_response(200)
+            self.send_header('Content-type', 'text/plain; charset=utf-8')
+            self.end_headers()
+            self.wfile.write(body_text.encode('utf-8'))
+        except Exception as e:
+            self.send_response(500)
+            self.send_header('Content-type', 'text/plain; charset=utf-8')
+            self.end_headers()
+            self.wfile.write(f"Error: {str(e)}".encode('utf-8'))

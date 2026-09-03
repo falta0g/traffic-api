@@ -19,7 +19,8 @@ def get_map_image():
         f"center={CENTER_LAT},{CENTER_LNG}&zoom={ZOOM}&size=1024x1024"
         f"&maptype=roadmap&key={API_KEY}&layer=traffic"
     )
-    response = requests.get(url)
+    response = requests.get(url, timeout=10)
+    response.raise_for_status()
     return Image.open(BytesIO(response.content))
 
 def extract_red_distance(img_cv):
@@ -46,19 +47,26 @@ def extract_red_distance(img_cv):
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        img = get_map_image()
-        img_cv = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+        try:
+            img = get_map_image()
+            img_cv = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+            distance_km = extract_red_distance(img_cv)
 
-        distance_km = extract_red_distance(img_cv)
+            result = {
+                "nagano": round(distance_km * 0.55, 2),
+                "chuo": round(distance_km * 0.45, 2),
+                "total": round(distance_km, 2),
+                "updated": datetime.now().strftime("%Y-%m-%d %H:%M")
+            }
 
-        result = {
-            "nagano": round(distance_km * 0.55, 2),
-            "chuo": round(distance_km * 0.45, 2),
-            "total": round(distance_km, 2),
-            "updated": datetime.now().strftime("%Y-%m-%d %H:%M")
-        }
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps(result).encode('utf-8'))
 
-        self.send_response(200)
-        self.send_header('Content-type', 'application/json')
-        self.end_headers()
-        self.wfile.write(json.dumps(result).encode('utf-8'))
+        except Exception as e:
+            self.send_response(500)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            error_msg = {"error": str(e)}
+            self.wfile.write(json.dumps(error_msg).encode('utf-8'))

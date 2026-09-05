@@ -112,33 +112,34 @@ def send_line_push(text_content):
         return f"LINE push error: {str(e)}"
 
 
-class handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        try:
-            default_origin = os.environ.get("MAPS_ORIGIN", "塩尻北IC")
-            default_destination = os.environ.get("MAPS_DESTINATION", "諏訪IC")
+def handler(request):
+    try:
+        default_origin = os.environ.get("MAPS_ORIGIN", "塩尻北IC")
+        default_destination = os.environ.get("MAPS_DESTINATION", "諏訪IC")
 
-            parsed_path = urllib.parse.urlparse(self.path)
-            query_params = urllib.parse.parse_qs(parsed_path.query)
+        # リクエストからクエリパラメーターを取得
+        args = getattr(request, "args", {}) or {}
+        
+        origin = args.get("origin", default_origin)
+        destination = args.get("destination", default_destination)
+        
+        is_reverse = str(args.get("reverse", "false")).lower() in ["true", "1"]
+        if is_reverse:
+            origin, destination = destination, origin
 
-            origin = query_params.get("origin", [default_origin])[0]
-            destination = query_params.get("destination", [default_destination])[0]
-            
-            is_reverse = query_params.get("reverse", ["false"])[0].lower() in ["true", "1"]
-            if is_reverse:
-                origin, destination = destination, origin
-
-            msg = calculate_realtime_traffic(origin=origin, destination=destination)
-            line_status = send_line_push(msg)
-            body_text = f"{msg}\n\n[Status]: {line_status}"
-            
-            self.send_response(200)
-            self.send_header('Content-type', 'text/plain; charset=utf-8')
-            self.end_headers()
-            self.wfile.write(body_text.encode('utf-8'))
-        except Exception as e:
-            error_msg = f"Runtime Error Details:\n{str(e)}"
-            self.send_response(200)
-            self.send_header('Content-type', 'text/plain; charset=utf-8')
-            self.end_headers()
-            self.wfile.write(error_msg.encode('utf-8'))
+        # 移動時間の計算とLINE通知
+        msg = calculate_realtime_traffic(origin=origin, destination=destination)
+        line_status = send_line_push(msg)
+        body_text = f"{msg}\n\n[Status]: {line_status}"
+        
+        return {
+            "statusCode": 200,
+            "headers": {"Content-Type": "text/plain; charset=utf-8"},
+            "body": body_text
+        }
+    except Exception as e:
+        return {
+            "statusCode": 500,
+            "headers": {"Content-Type": "text/plain; charset=utf-8"},
+            "body": f"Runtime Error Details:\n{str(e)}"
+        }

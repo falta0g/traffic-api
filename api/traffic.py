@@ -5,7 +5,7 @@ from http.server import BaseHTTPRequestHandler
 import requests
 import googlemaps
 
-# 1. 一般道検索用の座標マッピング（IC入口交差点付近）
+# 1. 一般道検索用の座標マッピング
 IC_TO_LOCAL_COORDS = {
     "諏訪IC": "35.9868,138.1256",    # 諏訪IC前交差点
     "岡谷IC": "36.0700,138.0460",    # 岡谷IC前交差点
@@ -14,13 +14,30 @@ IC_TO_LOCAL_COORDS = {
     "伊北IC": "35.9421,137.9867"     # 伊北IC入口交差点
 }
 
-# 2. 高速道路検索用の座標マッピング（料金所・ゲート直前ランプ）
-IC_TO_EXPRESSWAY_COORDS = {
-    "塩尻北IC": "36.1585,137.9535",  # 塩尻北IC 料金所ランプ
-    "諏訪IC": "35.9890,138.1238",    # 諏訪IC 料金所ランプ
-    "岡谷IC": "36.0682,138.0450",    # 岡谷IC 料金所ランプ
-    "塩尻IC": "36.1250,137.9715",    # 塩尻IC 料金所ランプ
-    "伊北IC": "35.9415,137.9855"     # 伊北IC 料金所ランプ
+# 2. 高速道路本線座標（上下線別の車線ピンポイント指定）
+# [0]: 上り車線（名古屋・東京方面 / 南行き）
+# [1]: 下り車線（長野方面 / 北行き）
+IC_TO_EXPRESSWAY_BOUNDS = {
+    "塩尻北IC": {
+        "nb": "36.1580,137.9541",  # 上り（諏訪方面）
+        "sb": "36.1580,137.9539"   # 下り（長野方面）
+    },
+    "岡谷IC": {
+        "nb": "36.0688,138.0443",  # 上り（諏訪方面）
+        "sb": "36.0688,138.0441"   # 下り（塩尻方面）
+    },
+    "諏訪IC": {
+        "nb": "35.9895,138.1242",  # 上り（東京方面）
+        "sb": "35.9895,138.1240"   # 下り（岡谷方面）
+    },
+    "塩尻IC": {
+        "nb": "36.1252,137.9708",  # 上り（岡谷方面）
+        "sb": "36.1252,137.9706"   # 下り（塩尻北方面）
+    },
+    "伊北IC": {
+        "nb": "35.9418,137.9862",  # 上り（諏訪方面）
+        "sb": "35.9418,137.9860"   # 下り（飯田方面）
+    }
 }
 
 
@@ -30,10 +47,12 @@ def get_local_spot(spot_name):
     return IC_TO_LOCAL_COORDS.get(clean_name, clean_name)
 
 
-def get_expressway_spot(spot_name):
-    """高速道路検索用の地点（料金所ランプ座標）を取得"""
+def get_expressway_spot(spot_name, direction="nb"):
+    """高速道路本線用の地点を取得（上下線指定）"""
     clean_name = spot_name.strip()
-    return IC_TO_EXPRESSWAY_COORDS.get(clean_name, clean_name)
+    if clean_name in IC_TO_EXPRESSWAY_BOUNDS:
+        return IC_TO_EXPRESSWAY_BOUNDS[clean_name].get(direction, IC_TO_EXPRESSWAY_BOUNDS[clean_name]["nb"])
+    return clean_name
 
 
 def get_leg_duration(gmaps_client, origin, destination, avoid=None):
@@ -78,10 +97,20 @@ def calculate_realtime_traffic(origin="塩尻北IC", destination="諏訪IC", via
 
     gmaps = googlemaps.Client(key=api_key)
 
+    # 進行方向の判定（簡易判定：塩尻北➔諏訪は上り"nb"、諏訪➔塩尻北は下り"sb"）
+    # ICの並び順（北から順: 塩尻北 -> 塩尻 -> 岡谷 -> 諏訪 -> 伊北）
+    ic_order = ["塩尻北IC", "塩尻IC", "岡谷IC", "諏訪IC", "伊北IC"]
+    try:
+        orig_idx = ic_order.index(origin.strip())
+        dest_idx = ic_order.index(destination.strip())
+        direction = "nb" if orig_idx < dest_idx else "sb"
+    except ValueError:
+        direction = "nb"
+
     # 用途別の座標を取得
-    origin_express = get_expressway_spot(origin)
-    destination_express = get_expressway_spot(destination)
-    via_express = get_expressway_spot(via)
+    origin_express = get_expressway_spot(origin, direction)
+    destination_express = get_expressway_spot(destination, direction)
+    via_express = get_expressway_spot(via, direction)
 
     origin_local = get_local_spot(origin)
     destination_local = get_local_spot(destination)

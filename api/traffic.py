@@ -5,7 +5,7 @@ from http.server import BaseHTTPRequestHandler
 import requests
 import googlemaps
 
-# IC名から「一般道側の緯度経度」へのマッピング（高速道路への吸い寄せを物理的に防止）
+# 1. 一般道検索用の座標マッピング（高速道路への吸い寄せ防止）
 IC_TO_LOCAL_COORDS = {
     "諏訪IC": "35.9868,138.1256",    # 諏訪IC前交差点（国道20号）
     "岡谷IC": "36.0700,138.0460",    # 岡谷IC前交差点（国道20号/142号）
@@ -14,9 +14,24 @@ IC_TO_LOCAL_COORDS = {
     "伊北IC": "35.9421,137.9867"     # 伊北IC入口交差点
 }
 
+# 2. 高速道路検索用の接頭辞補正（一般道やバス停への誤判定防止）
+IC_EXPRESSWAY_PREFIX = {
+    "諏訪IC": "中央自動車道 諏訪IC",
+    "岡谷IC": "長野自動車道 岡谷IC",
+    "塩尻北IC": "長野自動車道 塩尻北IC",
+    "塩尻IC": "長野自動車道 塩尻IC",
+    "伊北IC": "中央自動車道 伊北IC"
+}
 
-def get_spot_for_local(spot_name):
-    """一般道計算用の地点を取得（IC名なら一般道交差点の座標に置換）"""
+
+def get_expressway_spot(spot_name):
+    """高速道路検索用の名称を取得"""
+    clean_name = spot_name.strip()
+    return IC_EXPRESSWAY_PREFIX.get(clean_name, clean_name)
+
+
+def get_local_spot(spot_name):
+    """一般道検索用の地点（座標）を取得"""
     clean_name = spot_name.strip()
     return IC_TO_LOCAL_COORDS.get(clean_name, clean_name)
 
@@ -63,28 +78,32 @@ def calculate_realtime_traffic(origin="塩尻北IC", destination="諏訪IC", via
 
     gmaps = googlemaps.Client(key=api_key)
 
-    # 一般道検索用のスポット（座標）に置換
-    origin_local = get_spot_for_local(origin)
-    destination_local = get_spot_for_local(destination)
-    via_local = get_spot_for_local(via)
+    # 用途別の地点指定を作成
+    origin_express = get_expressway_spot(origin)
+    destination_express = get_expressway_spot(destination)
+    via_express = get_expressway_spot(via)
 
-    # 1. ①全高速ルート
-    time_r1 = get_leg_duration(gmaps, origin, destination, avoid=None)
+    origin_local = get_local_spot(origin)
+    destination_local = get_local_spot(destination)
+    via_local = get_local_spot(via)
+
+    # 1. ①全高速ルート（高速道路名を明記）
+    time_r1 = get_leg_duration(gmaps, origin_express, destination_express, avoid=None)
     url_r1 = make_map_url(origin, destination, avoid=None)
 
     # 2. ②-1 前半一般道(origin➔via) + 後半高速(via➔destination)
     t2_1_part1 = get_leg_duration(gmaps, origin_local, via_local, avoid=["tolls", "highways"])
-    t2_1_part2 = get_leg_duration(gmaps, via, destination, avoid=None)
+    t2_1_part2 = get_leg_duration(gmaps, via_express, destination_express, avoid=None)
     time_r2_1 = t2_1_part1 + t2_1_part2
     url_r2_1 = make_map_url(origin, destination, via=via)
 
     # 3. ②-2 前半高速(origin➔via) + 後半一般道(via➔destination)
-    t2_2_part1 = get_leg_duration(gmaps, origin, via, avoid=None)
+    t2_2_part1 = get_leg_duration(gmaps, origin_express, via_express, avoid=None)
     t2_2_part2 = get_leg_duration(gmaps, via_local, destination_local, avoid=["tolls", "highways"])
     time_r2_2 = t2_2_part1 + t2_2_part2
     url_r2_2 = make_map_url(origin, destination, via=via)
 
-    # 4. ③全一般道ルート（座標ベースで確実に一般道を通す）
+    # 4. ③全一般道ルート（座標ベースで検索）
     time_r3 = get_leg_duration(gmaps, origin_local, destination_local, avoid=["tolls", "highways"])
     url_r3 = make_map_url(origin, destination, avoid="tolls")
 

@@ -5,7 +5,7 @@ from http.server import BaseHTTPRequestHandler
 import requests
 import googlemaps
 
-# 1. 一般道検索用の座標マッピング
+# 1. 一般道検索用の座標マッピング（IC入口交差点付近）
 IC_TO_LOCAL_COORDS = {
     "諏訪IC": "35.9868,138.1256",    # 諏訪IC前交差点
     "岡谷IC": "36.0700,138.0460",    # 岡谷IC前交差点
@@ -14,13 +14,30 @@ IC_TO_LOCAL_COORDS = {
     "伊北IC": "35.9421,137.9867"     # 伊北IC入口交差点
 }
 
-# 2. 高速道路インターチェンジ本体の Place ID マッピング
-IC_TO_PLACE_ID = {
-    "塩尻北IC": "place_id:ChIJ929dZ33oHWAR4j4g29p-pQ0",
-    "岡谷IC": "place_id:ChIJg_D4R2XmHWARy4Yg29p-pQ0",
-    "諏訪IC": "place_id:ChIJL0vD003nHWARiI4g29p-pQ0",
-    "塩尻IC": "place_id:ChIJ931dZ33oHWAR3j4g29p-pQ0",
-    "伊北IC": "place_id:ChIJ_41D003nHWARkI4g29p-pQ0"
+# 2. 高速道路本線座標（上下線別の本線車線指定）
+# [nb]: 上り（諏訪・東京方面 / 南行き）
+# [sb]: 下り（松本・長野方面 / 北行き）
+IC_TO_EXPRESSWAY_BOUNDS = {
+    "塩尻北IC": {
+        "nb": "36.1555,137.9535",  # 塩尻北IC本線 (上り車線)
+        "sb": "36.1555,137.9533"   # 塩尻北IC本線 (下り車線)
+    },
+    "岡谷IC": {
+        "nb": "36.0645,138.0452",  # 岡谷IC本線 (上り車線)
+        "sb": "36.0645,138.0448"   # 岡谷IC本線 (下り車線)
+    },
+    "諏訪IC": {
+        "nb": "36.0029,138.1292",  # 諏訪IC本線 (上り車線)
+        "sb": "36.0029,138.1288"   # 諏訪IC本線 (下り車線)
+    },
+    "塩尻IC": {
+        "nb": "36.1260,137.9702",  # 塩尻IC本線 (上り車線)
+        "sb": "36.1260,137.9698"   # 塩尻IC本線 (下り車線)
+    },
+    "伊北IC": {
+        "nb": "35.9430,137.9862",  # 伊北IC本線 (上り車線)
+        "sb": "35.9430,137.9858"   # 伊北IC本線 (下り車線)
+    }
 }
 
 
@@ -30,12 +47,11 @@ def get_local_spot(spot_name):
     return IC_TO_LOCAL_COORDS.get(clean_name, clean_name)
 
 
-def get_expressway_spot(spot_name):
-    """高速道路検索用の Place ID を取得"""
+def get_expressway_spot(spot_name, direction="nb"):
+    """高速道路本線用の地点（座標）を取得"""
     clean_name = spot_name.strip()
-    if clean_name in IC_TO_PLACE_ID:
-        return IC_TO_PLACE_ID[clean_name]
-    # マッピングにない場合は文字列のまま指定
+    if clean_name in IC_TO_EXPRESSWAY_BOUNDS:
+        return IC_TO_EXPRESSWAY_BOUNDS[clean_name].get(direction, IC_TO_EXPRESSWAY_BOUNDS[clean_name]["nb"])
     return clean_name
 
 
@@ -85,10 +101,19 @@ def calculate_realtime_traffic(origin="塩尻北IC", destination="諏訪IC", via
     destination_name = destination.strip()
     via_name = via.strip()
 
-    # 高速用 Place ID スポット
-    origin_express = get_expressway_spot(origin_name)
-    destination_express = get_expressway_spot(destination_name)
-    via_express = get_expressway_spot(via_name)
+    # 進行方向（上り/下り）の自動判別
+    ic_order = ["塩尻北IC", "塩尻IC", "岡谷IC", "諏訪IC", "伊北IC"]
+    try:
+        orig_idx = ic_order.index(origin_name)
+        dest_idx = ic_order.index(destination_name)
+        direction = "nb" if orig_idx < dest_idx else "sb"
+    except ValueError:
+        direction = "nb"
+
+    # 高速用 本線座標スポット
+    origin_express = get_expressway_spot(origin_name, direction)
+    destination_express = get_expressway_spot(destination_name, direction)
+    via_express = get_expressway_spot(via_name, direction)
 
     # 一般道用 座標スポット
     origin_local = get_local_spot(origin_name)

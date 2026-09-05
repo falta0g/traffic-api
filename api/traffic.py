@@ -14,13 +14,13 @@ IC_TO_LOCAL_COORDS = {
     "伊北IC": "35.9421,137.9867"     # 伊北IC入口交差点
 }
 
-# 2. 高速道路検索用の絶対座標（文字検索のブレ・Uターン迂回を完全防止）
+# 2. 高速道路本線上のピンポイント座標（下道への判定ブレを完全排除）
 IC_TO_EXPRESSWAY_COORDS = {
-    "諏訪IC": "35.9856,138.1242",    # 諏訪IC 料金所付近
-    "岡谷IC": "36.0682,138.0461",    # 岡谷IC 料金所付近
-    "塩尻北IC": "36.1583,137.9542",  # 塩尻北IC 料金所付近
-    "塩尻IC": "36.1246,137.9718",    # 塩尻IC 料金所付近
-    "伊北IC": "35.9412,137.9880"     # 伊北IC 料金所付近
+    "諏訪IC": "35.9839,138.1219",    # 中央道本線（諏訪IC合流部）
+    "岡谷IC": "36.0664,138.0441",    # 長野道本線（岡谷IC合流部）
+    "塩尻北IC": "36.1565,137.9540",  # 長野道本線（塩尻北IC合流部）
+    "塩尻IC": "36.1231,137.9702",    # 長野道本線（塩尻IC合流部）
+    "伊北IC": "35.9395,137.9892"     # 中央道本線（伊北IC合流部）
 }
 
 
@@ -31,7 +31,7 @@ def get_local_spot(spot_name):
 
 
 def get_expressway_spot(spot_name):
-    """高速道路検索用の地点（座標）を取得"""
+    """高速道路検索用の地点（本線座標）を取得"""
     clean_name = spot_name.strip()
     return IC_TO_EXPRESSWAY_COORDS.get(clean_name, clean_name)
 
@@ -56,7 +56,7 @@ def get_leg_duration(gmaps_client, origin, destination, avoid=None):
 
 
 def make_map_url(origin, destination, via=None, avoid=None):
-    """Google Maps URL生成（テキスト表示用パラメータ）"""
+    """Google Maps URL生成"""
     base_url = "https://www.google.com/maps/dir/?"
     params = {
         "api": "1",
@@ -87,7 +87,7 @@ def calculate_realtime_traffic(origin="塩尻北IC", destination="諏訪IC", via
     destination_local = get_local_spot(destination)
     via_local = get_local_spot(via)
 
-    # 1. ①全高速ルート（座標間検索）
+    # 1. ①全高速ルート（本線座標間検索）
     time_r1 = get_leg_duration(gmaps, origin_express, destination_express, avoid=None)
     url_r1 = make_map_url(origin, destination, avoid=None)
 

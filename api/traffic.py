@@ -3,23 +3,14 @@ import requests
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
 
-# 環境変数を複数の候補名から自動取得
-GOOGLE_MAPS_API_KEY = (
-    os.environ.get("GOOGLE_MAPS_API_KEY") or 
-    os.environ.get("GOOGLE_API_KEY") or 
-    os.environ.get("MAPS_API_KEY")
-)
-
-LINE_NOTIFY_TOKEN = (
-    os.environ.get("LINE_NOTIFY_TOKEN") or 
-    os.environ.get("LINE_ACCESS_TOKEN") or 
-    os.environ.get("LINE_TOKEN")
-)
+# 正しい環境変数名のみを指定して取得
+GOOGLE_MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY")
+LINE_NOTIFY_TOKEN = os.environ.get("LINE_NOTIFY_TOKEN") or os.environ.get("LINE_ACCESS_TOKEN")
 
 def get_traffic_info(origin, destination):
     """Google Maps API から所要時間を取得"""
     if not GOOGLE_MAPS_API_KEY:
-        return None, "Google Maps APIキーが設定されていません。VercelのEnvironment Variablesで GOOGLE_MAPS_API_KEY を確認してください。"
+        return None, "GOOGLE_MAPS_API_KEY が設定されていません。"
 
     try:
         url = "https://maps.googleapis.com/maps/api/distancematrix/json"
@@ -32,13 +23,11 @@ def get_traffic_info(origin, destination):
         }
         res = requests.get(url, params=params, timeout=10).json()
 
-        # Google Maps API 全体のステータス確認
         api_status = res.get("status")
         if api_status != "OK":
             error_details = res.get("error_message", "詳細なし")
             return None, f"Google Maps API エラー ({api_status}): {error_details}"
 
-        # レスポンス構造の安全な読み込み
         rows = res.get("rows", [])
         if not rows:
             return None, "Google Maps API からのデータが空です。"
@@ -63,7 +52,7 @@ def get_traffic_info(origin, destination):
 def send_line_notification(message):
     """LINE Notify へ通知を送信"""
     if not LINE_NOTIFY_TOKEN:
-        return False, "LINEトークンが設定されていません。VercelのEnvironment Variablesで LINE_NOTIFY_TOKEN を確認してください。"
+        return False, "LINE_NOTIFY_TOKEN が設定されていません。"
 
     try:
         url = "https://notify-api.line.me/api/notify"
@@ -81,14 +70,14 @@ def send_line_notification(message):
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
-            # 1. Safari等の事前読み込み（プリフェッチ）をブロック（2重送信防止）
+            # 1. Safari等の事前読み込み（プリフェッチ）をブロック（二重送信防止）
             purpose = self.headers.get('Purpose') or self.headers.get('Sec-Purpose')
             if purpose in ['prefetch', 'preview']:
                 self.send_response(204)
                 self.end_headers()
                 return
 
-            # 2. favicon.ico 自動アクセスをブロック（2重送信防止）
+            # 2. favicon.ico 自動アクセスをブロック（二重送信防止）
             parsed_path = urlparse(self.path)
             if parsed_path.path == '/favicon.ico':
                 self.send_response(204)

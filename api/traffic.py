@@ -115,10 +115,30 @@ def send_line_push(text_content):
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
+            # --------------------------------------------------
+            # ガード1: Safariの事前読み込み（プリフェッチ）を検知してブロック
+            # --------------------------------------------------
+            purpose = self.headers.get('Purpose') or self.headers.get('Sec-Purpose')
+            if purpose in ['prefetch', 'preview']:
+                self.send_response(204)  # No Content（LINE送信せず即座に終了）
+                self.end_headers()
+                return
+
+            # --------------------------------------------------
+            # ガード2: ブラウザの favicon.ico 自動アクセスをブロック
+            # --------------------------------------------------
+            parsed_path = urllib.parse.urlparse(self.path)
+            if parsed_path.path == '/favicon.ico':
+                self.send_response(204)
+                self.end_headers()
+                return
+
+            # --------------------------------------------------
+            # 通常処理（パラメータ解析＆送信）
+            # --------------------------------------------------
             default_origin = os.environ.get("MAPS_ORIGIN", "塩尻北IC")
             default_destination = os.environ.get("MAPS_DESTINATION", "諏訪IC")
 
-            parsed_path = urllib.parse.urlparse(self.path)
             query_params = urllib.parse.parse_qs(parsed_path.query)
 
             origin = query_params.get("origin", [default_origin])[0]
@@ -132,13 +152,18 @@ class handler(BaseHTTPRequestHandler):
             line_status = send_line_push(msg)
             body_text = f"{msg}\n\n[Status]: {line_status}"
             
+            # HTML形式でレスポンスを返却（ファイルダウンロード化を防止）
             self.send_response(200)
-            self.send_header('Content-type', 'text/plain; charset=utf-8')
+            self.send_header('Content-type', 'text/html; charset=utf-8')
             self.end_headers()
-            self.wfile.write(body_text.encode('utf-8'))
+            
+            html_content = f"<html><body><pre style='font-size:16px; white-space:pre-wrap;'>{body_text}</pre></body></html>"
+            self.wfile.write(html_content.encode('utf-8'))
+
         except Exception as e:
             error_msg = f"Runtime Error Details:\n{str(e)}"
             self.send_response(200)
-            self.send_header('Content-type', 'text/plain; charset=utf-8')
+            self.send_header('Content-type', 'text/html; charset=utf-8')
             self.end_headers()
-            self.wfile.write(error_msg.encode('utf-8'))
+            err_html = f"<html><body><pre style='font-size:16px; color:red;'>{error_msg}</pre></body></html>"
+            self.wfile.write(err_html.encode('utf-8'))

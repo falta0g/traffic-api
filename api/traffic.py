@@ -3,13 +3,23 @@ import requests
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
 
-GOOGLE_MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY")
-LINE_NOTIFY_TOKEN = os.environ.get("LINE_NOTIFY_TOKEN") or os.environ.get("LINE_ACCESS_TOKEN")
+# 環境変数を複数の候補名から自動取得
+GOOGLE_MAPS_API_KEY = (
+    os.environ.get("GOOGLE_MAPS_API_KEY") or 
+    os.environ.get("GOOGLE_API_KEY") or 
+    os.environ.get("MAPS_API_KEY")
+)
+
+LINE_NOTIFY_TOKEN = (
+    os.environ.get("LINE_NOTIFY_TOKEN") or 
+    os.environ.get("LINE_ACCESS_TOKEN") or 
+    os.environ.get("LINE_TOKEN")
+)
 
 def get_traffic_info(origin, destination):
     """Google Maps API から所要時間を取得"""
     if not GOOGLE_MAPS_API_KEY:
-        return None, "Google Maps APIキー（環境変数: GOOGLE_MAPS_API_KEY）が設定されていません。"
+        return None, "Google Maps APIキーが設定されていません。VercelのEnvironment Variablesで GOOGLE_MAPS_API_KEY を確認してください。"
 
     try:
         url = "https://maps.googleapis.com/maps/api/distancematrix/json"
@@ -53,7 +63,7 @@ def get_traffic_info(origin, destination):
 def send_line_notification(message):
     """LINE Notify へ通知を送信"""
     if not LINE_NOTIFY_TOKEN:
-        return False, "LINEトークン（環境変数: LINE_NOTIFY_TOKEN）が設定されていません。"
+        return False, "LINEトークンが設定されていません。VercelのEnvironment Variablesで LINE_NOTIFY_TOKEN を確認してください。"
 
     try:
         url = "https://notify-api.line.me/api/notify"
@@ -71,14 +81,14 @@ def send_line_notification(message):
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
-            # 1. Safari等の事前読み込み（プリフェッチ）をブロック
+            # 1. Safari等の事前読み込み（プリフェッチ）をブロック（2重送信防止）
             purpose = self.headers.get('Purpose') or self.headers.get('Sec-Purpose')
             if purpose in ['prefetch', 'preview']:
                 self.send_response(204)
                 self.end_headers()
                 return
 
-            # 2. favicon.ico をブロック
+            # 2. favicon.ico 自動アクセスをブロック（2重送信防止）
             parsed_path = urlparse(self.path)
             if parsed_path.path == '/favicon.ico':
                 self.send_response(204)

@@ -5,22 +5,22 @@ from http.server import BaseHTTPRequestHandler
 import requests
 import googlemaps
 
-# 1. 一般道検索用の座標マッピング
+# 1. 一般道検索用の座標マッピング（IC入口交差点付近）
 IC_TO_LOCAL_COORDS = {
-    "諏訪IC": "35.9868,138.1256",    # 諏訪IC前交差点（国道20号）
-    "岡谷IC": "36.0700,138.0460",    # 岡谷IC前交差点（国道20号/142号）
-    "塩尻北IC": "36.1603,137.9542",  # 塩尻北IC入口交差点（国道19号）
+    "諏訪IC": "35.9868,138.1256",    # 諏訪IC前交差点
+    "岡谷IC": "36.0700,138.0460",    # 岡谷IC前交差点
+    "塩尻北IC": "36.1603,137.9542",  # 塩尻北IC入口交差点
     "塩尻IC": "36.1264,137.9731",    # 塩尻IC入口交差点
     "伊北IC": "35.9421,137.9867"     # 伊北IC入口交差点
 }
 
-# 2. 高速道路本線上のピンポイント座標マッピング（一般道への引き戻しを防止）
+# 2. 高速道路検索用の座標マッピング（料金所・ゲート直前ランプ）
 IC_TO_EXPRESSWAY_COORDS = {
-    "塩尻北IC": "36.1687,137.9527",  # 塩尻北IC高速本線
-    "諏訪IC": "36.0029,138.1290",    # 諏訪IC高速本線
-    "岡谷IC": "36.0645,138.0450",    # 岡谷ジャンクション/IC高速本線
-    "塩尻IC": "36.1260,137.9700",    # 塩尻IC高速本線
-    "伊北IC": "35.9430,137.9860"     # 伊北IC高速本線
+    "塩尻北IC": "36.1585,137.9535",  # 塩尻北IC 料金所ランプ
+    "諏訪IC": "35.9890,138.1238",    # 諏訪IC 料金所ランプ
+    "岡谷IC": "36.0682,138.0450",    # 岡谷IC 料金所ランプ
+    "塩尻IC": "36.1250,137.9715",    # 塩尻IC 料金所ランプ
+    "伊北IC": "35.9415,137.9855"     # 伊北IC 料金所ランプ
 }
 
 
@@ -31,7 +31,7 @@ def get_local_spot(spot_name):
 
 
 def get_expressway_spot(spot_name):
-    """高速道路本線検索用の地点（座標文字列）を取得"""
+    """高速道路検索用の地点（料金所ランプ座標）を取得"""
     clean_name = spot_name.strip()
     return IC_TO_EXPRESSWAY_COORDS.get(clean_name, clean_name)
 
@@ -56,7 +56,7 @@ def get_leg_duration(gmaps_client, origin, destination, avoid=None):
 
 
 def make_map_url(origin, destination, via=None, avoid=None):
-    """Google Maps URL生成（マップ開く用はIC名称を使用）"""
+    """Google Maps URL生成"""
     base_url = "https://www.google.com/maps/dir/?"
     params = {
         "api": "1",
@@ -78,7 +78,7 @@ def calculate_realtime_traffic(origin="塩尻北IC", destination="諏訪IC", via
 
     gmaps = googlemaps.Client(key=api_key)
 
-    # 高速道路本線座標・一般道座標を取得
+    # 用途別の座標を取得
     origin_express = get_expressway_spot(origin)
     destination_express = get_expressway_spot(destination)
     via_express = get_expressway_spot(via)

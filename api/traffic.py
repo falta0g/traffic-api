@@ -14,33 +14,26 @@ IC_TO_LOCAL_COORDS = {
     "伊北IC": "35.9421,137.9867"     # 伊北IC入口交差点
 }
 
-# 2. 高速道路検索用の確定ポイント（逆走・一般道迂回防止用）
-# 名前の曖昧さを排除するため、より具体的な検索表記を使用
-IC_EXPRESSWAY_NAMES = {
-    "諏訪IC": "中央自動車道 諏訪IC",
-    "岡谷IC": "長野自動車道 岡谷IC",
-    "塩尻北IC": "長野自動車道 塩尻北IC",
-    "塩尻IC": "長野自動車道 塩尻IC",
-    "伊北IC": "中央自動車道 伊北IC"
+# 2. 高速道路検索用の絶対座標（文字検索のブレ・Uターン迂回を完全防止）
+IC_TO_EXPRESSWAY_COORDS = {
+    "諏訪IC": "35.9856,138.1242",    # 諏訪IC 料金所付近
+    "岡谷IC": "36.0682,138.0461",    # 岡谷IC 料金所付近
+    "塩尻北IC": "36.1583,137.9542",  # 塩尻北IC 料金所付近
+    "塩尻IC": "36.1246,137.9718",    # 塩尻IC 料金所付近
+    "伊北IC": "35.9412,137.9880"     # 伊北IC 料金所付近
 }
 
 
 def get_local_spot(spot_name):
-    """一般道検索用の地点（座標）を取得"""
+    """一般道検索用の地点を取得"""
     clean_name = spot_name.strip()
     return IC_TO_LOCAL_COORDS.get(clean_name, clean_name)
 
 
-def get_expressway_spot(spot_name, is_origin=True, destination_name=""):
-    """高速道路検索用の地点を取得（方向による誤認識を修正）"""
+def get_expressway_spot(spot_name):
+    """高速道路検索用の地点（座標）を取得"""
     clean_name = spot_name.strip()
-    base_name = IC_EXPRESSWAY_NAMES.get(clean_name, clean_name)
-    
-    # 塩尻北ICから諏訪IC方向（上り）への乗車時のUターン迂回バグをピンポイント回避
-    if clean_name == "塩尻北IC" and "諏訪" in destination_name:
-        return "長野自動車道 塩尻北IC 上り"
-    
-    return base_name
+    return IC_TO_EXPRESSWAY_COORDS.get(clean_name, clean_name)
 
 
 def get_leg_duration(gmaps_client, origin, destination, avoid=None):
@@ -63,7 +56,7 @@ def get_leg_duration(gmaps_client, origin, destination, avoid=None):
 
 
 def make_map_url(origin, destination, via=None, avoid=None):
-    """Google Maps URL生成"""
+    """Google Maps URL生成（テキスト表示用パラメータ）"""
     base_url = "https://www.google.com/maps/dir/?"
     params = {
         "api": "1",
@@ -85,16 +78,16 @@ def calculate_realtime_traffic(origin="塩尻北IC", destination="諏訪IC", via
 
     gmaps = googlemaps.Client(key=api_key)
 
-    # 用途別の地点指定を作成
-    origin_express = get_expressway_spot(origin, is_origin=True, destination_name=destination)
-    destination_express = get_expressway_spot(destination, is_origin=False, destination_name=origin)
-    via_express = get_expressway_spot(via, is_origin=False, destination_name="")
+    # 用途別の地点（座標）を作成
+    origin_express = get_expressway_spot(origin)
+    destination_express = get_expressway_spot(destination)
+    via_express = get_expressway_spot(via)
 
     origin_local = get_local_spot(origin)
     destination_local = get_local_spot(destination)
     via_local = get_local_spot(via)
 
-    # 1. ①全高速ルート
+    # 1. ①全高速ルート（座標間検索）
     time_r1 = get_leg_duration(gmaps, origin_express, destination_express, avoid=None)
     url_r1 = make_map_url(origin, destination, avoid=None)
 

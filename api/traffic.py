@@ -6,36 +6,27 @@ import requests
 import googlemaps
 
 
-def get_route_duration_and_url(gmaps_client, origin, destination, avoid=None, via=None):
-    """Google Maps API から所要時間（分）と地図リンクを一括取得"""
+def get_leg_duration(gmaps_client, origin, destination, avoid=None):
+    """単一区間の所要時間（分）を取得"""
     now = datetime.datetime.now()
-    
-    # パラメータ組み立て
-    waypoints = [f"via:{via}"] if via else None
-    
     directions_result = gmaps_client.directions(
         origin=origin,
         destination=destination,
         mode="driving",
         departure_time=now,
-        avoid=avoid,
-        waypoints=waypoints
+        avoid=avoid
     )
 
     if not directions_result:
         raise ValueError(f"'{origin}' から '{destination}' へのルートが見つかりませんでした。")
 
-    # 全 leg の所要時間を合算
-    leg_sum_sec = 0
-    for leg in directions_result[0]["legs"]:
-        if "duration_in_traffic" in leg:
-            leg_sum_sec += leg["duration_in_traffic"]["value"]
-        else:
-            leg_sum_sec += leg["duration"]["value"]
+    leg = directions_result[0]["legs"][0]
+    duration_sec = leg.get("duration_in_traffic", leg.get("duration", {})).get("value", 0)
+    return round(duration_sec / 60)
 
-    duration_min = round(leg_sum_sec / 60)
 
-    # Google Maps URLの生成
+def make_map_url(origin, destination, via=None, avoid=None):
+    """Google Maps URL生成"""
     base_url = "https://www.google.com/maps/dir/?"
     params = {
         "api": "1",
@@ -47,13 +38,10 @@ def get_route_duration_and_url(gmaps_client, origin, destination, avoid=None, vi
         params["waypoints"] = via
     if avoid:
         params["avoid"] = avoid
-
-    map_url = base_url + urllib.parse.urlencode(params)
-
-    return duration_min, map_url
+    return base_url + urllib.parse.urlencode(params)
 
 
-def calculate_realtime_traffic(origin="塩尻北IC", destination="諏訪IC", via="岡谷JCT"):
+def calculate_realtime_traffic(origin="塩尻北IC", destination="諏訪IC", via="岡谷IC"):
     api_key = os.environ.get("GOOGLE_API_KEY")
     if not api_key:
         raise ValueError("環境変数 GOOGLE_API_KEY が設定されていません。")
@@ -61,17 +49,34 @@ def calculate_realtime_traffic(origin="塩尻北IC", destination="諏訪IC", via
     gmaps = googlemaps.Client(key=api_key)
 
     # 1. ①全高速
-    time_r1, url_r1 = get_route_duration_and_url(gmaps, origin, destination, avoid=None)
+    time_r1 = get_leg_duration(gmaps, origin, destination, avoid=None)
+    url_r1 = make_map_url(origin, destination, avoid=None)
 
-    # 2. ②-1 経由地（岡谷JCTなど）を経由した一般道・高速併用ルート
-    time_r2, url_r2 = get_route_duration_and_url(gmaps, origin, destination, via=via)
+    # 2. ②-1 前半(origin ➔ via)一般道、後半(via ➔ destination)高速
+    # IC乗り降りの検索精度を上げるため "経由IC名" を指定
+    t2_1_part1 = get_leg_duration(gmaps, origin, via, avoid="tolls")
+    t2_1_part2 = get_leg_duration(gmaps, via, destination, avoid=None)
+    time_r2_1 = t2_1_part1 + t2_1_part2
+    url_r2_1 = make_map_url(origin, destination, via=via)
 
-    # 3. ③全一般道
-    time_r3, url_r3 = get_route_duration_and_url(gmaps, origin, destination, avoid="tolls")
+    # 3. ②-2 前半(origin ➔ via)高速、後半(via ➔ destination)一般道
+    t2_2_part1 = get_leg_duration(gmaps, origin, via, avoid=None)
+    t2_2_part2 = get_leg_duration(gmaps, via, destination, avoid="tolls")
+    time_r2_2 = t2_2_part1 + t2_2_part2
+    url_r2_2 = make_map_url(origin, destination, via=via)
+
+    # 4. ③全一般道
+    time_r3 = get_leg_duration(gmaps, origin, destination, avoid="tolls")
+    url_r3 = make_map_url(origin, destination, avoid="tolls")
+
+    # ラベル作成
+    label_2_1 = f"②-1一般道({origin}➔{via})➔高速({via}➔{destination})"
+    label_2_2 = f"②-2高速({origin}➔{via})➔一般道({via}➔{destination})"
 
     routes = [
         {"name": "①全高速", "time": time_r1, "url": url_r1},
-        {"name": f"②併用ルート({via}経由)", "time": time_r2, "url": url_r2},
+        {"name": label_2_1, "time": time_r2_1, "url": url_r2_1},
+        {"name": label_2_2, "time": time_r2_2, "url": url_r2_2},
         {"name": "③全一般道", "time": time_r3, "url": url_r3}
     ]
 
@@ -88,9 +93,10 @@ def calculate_realtime_traffic(origin="塩尻北IC", destination="諏訪IC", via
 
     msg = (
         f"🚗【リアルタイム移動時間見積り ({origin} ➔ {destination})】\n"
-        f"経由ポイント: {via}\n\n"
+        f"経由地: {via}\n\n"
         f"・①全高速ルート: 約 {time_r1} 分\n"
-        f"・②一般道・高速併用ルート: 約 {time_r2} 分\n"
+        f"・{label_2_1}: 約 {time_r2_1} 分\n"
+        f"・{label_2_2}: 約 {time_r2_2} 分\n"
         f"・③全一般道ルート: 約 {time_r3} 分\n"
         "----------------------\n"
         f"◇現在の最速ルートは、【{best_name}】です。\n"
@@ -145,7 +151,7 @@ class handler(BaseHTTPRequestHandler):
 
             default_origin = os.environ.get("MAPS_ORIGIN", "塩尻北IC")
             default_destination = os.environ.get("MAPS_DESTINATION", "諏訪IC")
-            default_via = os.environ.get("MAPS_VIA", "岡谷JCT")
+            default_via = os.environ.get("MAPS_VIA", "岡谷IC")
 
             origin = query_params.get("origin", [default_origin])[0]
             destination = query_params.get("destination", [default_destination])[0]
@@ -165,7 +171,7 @@ class handler(BaseHTTPRequestHandler):
                 <html>
                 <head><meta charset="utf-8"><title>送信処理中</title></head>
                 <body style="font-family:sans-serif; text-align:center; padding-top:50px;">
-                    <h3>交通情報を計算中...</h3>
+                    <h3>4ルートの交通情報を計算中...</h3>
                     <p>自動的にLINEへ通知されます。</p>
                     <script>
                         setTimeout(function() {{

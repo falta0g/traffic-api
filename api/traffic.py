@@ -48,33 +48,34 @@ def calculate_realtime_traffic(origin="塩尻北IC", destination="諏訪IC", via
 
     gmaps = googlemaps.Client(key=api_key)
 
-    # --------------------------------------------------
-    # 4パターンのリアルタイム所要時間を算出
-    # --------------------------------------------------
-    # ① 全高速
+    # 1. ①全高速
     time_r1 = get_leg_duration(gmaps, origin, destination, avoid=None)
     url_r1 = make_map_url(origin, destination, avoid=None)
 
-    # ②-1 一般道(出発➔経由地) + 高速(経由地➔到着)
+    # 2. ②-1 前半(origin ➔ via)が一般道、後半(via ➔ destination)が高速
     t2_1_part1 = get_leg_duration(gmaps, origin, via, avoid="tolls")
     t2_1_part2 = get_leg_duration(gmaps, via, destination, avoid=None)
     time_r2_1 = t2_1_part1 + t2_1_part2
     url_r2_1 = make_map_url(origin, destination, via=via)
 
-    # ②-2 高速(出発➔経由地) + 一般道(経由地➔到着)
+    # 3. ②-2 前半(origin ➔ via)が高速、後半(via ➔ destination)が一般道
     t2_2_part1 = get_leg_duration(gmaps, origin, via, avoid=None)
     t2_2_part2 = get_leg_duration(gmaps, via, destination, avoid="tolls")
     time_r2_2 = t2_2_part1 + t2_2_part2
     url_r2_2 = make_map_url(origin, destination, via=via)
 
-    # ③ 全一般道
+    # 4. ③全一般道
     time_r3 = get_leg_duration(gmaps, origin, destination, avoid="tolls")
     url_r3 = make_map_url(origin, destination, avoid="tolls")
 
+    # 表示用テキストの調整（進行方向に対応）
+    label_2_1 = f"②-1一般道({origin}➔{via})➔高速({via}➔{destination})"
+    label_2_2 = f"②-2高速({origin}➔{via})➔一般道({via}➔{destination})"
+
     routes = [
         {"name": "①全高速", "time": time_r1, "url": url_r1},
-        {"name": f"②-1一般道➔{via}➔高速", "time": time_r2_1, "url": url_r2_1},
-        {"name": f"②-2高速➔{via}➔一般道", "time": time_r2_2, "url": url_r2_2},
+        {"name": label_2_1, "time": time_r2_1, "url": url_r2_1},
+        {"name": label_2_2, "time": time_r2_2, "url": url_r2_2},
         {"name": "③全一般道", "time": time_r3, "url": url_r3}
     ]
 
@@ -93,8 +94,8 @@ def calculate_realtime_traffic(origin="塩尻北IC", destination="諏訪IC", via
         f"🚗【リアルタイム移動時間見積り ({origin} ➔ {destination})】\n"
         f"経由地: {via}\n\n"
         f"・①全高速ルート: 約 {time_r1} 分\n"
-        f"・②-1一般道➔{via}➔高速: 約 {time_r2_1} 分\n"
-        f"・②-2高速➔{via}➔一般道: 約 {time_r2_2} 分\n"
+        f"・{label_2_1}: 約 {time_r2_1} 分\n"
+        f"・{label_2_2}: 約 {time_r2_2} 分\n"
         f"・③全一般道ルート: 約 {time_r3} 分\n"
         "----------------------\n"
         f"◇現在の最速ルートは、【{best_name}】です。\n"
@@ -105,7 +106,6 @@ def calculate_realtime_traffic(origin="塩尻北IC", destination="諏訪IC", via
     )
 
     return msg
-
 
 def send_line_push(text_content):
     token = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")

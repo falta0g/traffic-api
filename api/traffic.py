@@ -14,13 +14,13 @@ IC_TO_LOCAL_COORDS = {
     "伊北IC": "35.9421,137.9867"     # 伊北IC入口交差点
 }
 
-# 2. 高速道路専用 Place ID マッピング（辞書型で渡すためのID文字列）
-IC_TO_PLACE_IDS = {
-    "塩尻北IC": "ChIJvdzP6ocPHWARBV4gKfkWuIM",
-    "諏訪IC": "ChIJqWbpy_FWHGARaUFx7oLHceo",
-    "岡谷IC": "ChIJs6_b21pWHGAR-iK7O-a47iI",
-    "塩尻IC": "ChIJq3S4x28PHWARS7G3N99uN7w",
-    "伊北IC": "ChIJf3Y3lV1VHGAR24kC-qJ9-eM"
+# 2. 高速道路本線上のピンポイント座標マッピング（一般道への引き戻しを防止）
+IC_TO_EXPRESSWAY_COORDS = {
+    "塩尻北IC": "36.1687,137.9527",  # 塩尻北IC高速本線
+    "諏訪IC": "36.0029,138.1290",    # 諏訪IC高速本線
+    "岡谷IC": "36.0645,138.0450",    # 岡谷ジャンクション/IC高速本線
+    "塩尻IC": "36.1260,137.9700",    # 塩尻IC高速本線
+    "伊北IC": "35.9430,137.9860"     # 伊北IC高速本線
 }
 
 
@@ -31,35 +31,21 @@ def get_local_spot(spot_name):
 
 
 def get_expressway_spot(spot_name):
-    """高速道路検索用の地点情報を取得（python-googlemaps API仕様に準拠した辞書型）"""
+    """高速道路本線検索用の地点（座標文字列）を取得"""
     clean_name = spot_name.strip()
-    if clean_name in IC_TO_PLACE_IDS:
-        return {"place_id": IC_TO_PLACE_IDS[clean_name]}
-    return f"side_of_road:{clean_name}"
+    return IC_TO_EXPRESSWAY_COORDS.get(clean_name, clean_name)
 
 
 def get_leg_duration(gmaps_client, origin, destination, avoid=None):
     """単一区間の所要時間（分）を取得"""
     now = datetime.datetime.now()
-    try:
-        directions_result = gmaps_client.directions(
-            origin=origin,
-            destination=destination,
-            mode="driving",
-            departure_time=now,
-            avoid=avoid
-        )
-    except Exception as e:
-        # Place ID指定でエラーが発生した場合は側道プレフィックス文字列で再試行
-        orig_param = f"side_of_road:{origin['place_id']}" if isinstance(origin, dict) else origin
-        dest_param = f"side_of_road:{destination['place_id']}" if isinstance(destination, dict) else destination
-        directions_result = gmaps_client.directions(
-            origin=orig_param,
-            destination=dest_param,
-            mode="driving",
-            departure_time=now,
-            avoid=avoid
-        )
+    directions_result = gmaps_client.directions(
+        origin=origin,
+        destination=destination,
+        mode="driving",
+        departure_time=now,
+        avoid=avoid
+    )
 
     if not directions_result:
         raise ValueError(f"'{origin}' から '{destination}' へのルートが見つかりませんでした。")
@@ -70,7 +56,7 @@ def get_leg_duration(gmaps_client, origin, destination, avoid=None):
 
 
 def make_map_url(origin, destination, via=None, avoid=None):
-    """Google Maps URL生成"""
+    """Google Maps URL生成（マップ開く用はIC名称を使用）"""
     base_url = "https://www.google.com/maps/dir/?"
     params = {
         "api": "1",
@@ -92,7 +78,7 @@ def calculate_realtime_traffic(origin="塩尻北IC", destination="諏訪IC", via
 
     gmaps = googlemaps.Client(key=api_key)
 
-    # 地点情報の指定を生成
+    # 高速道路本線座標・一般道座標を取得
     origin_express = get_expressway_spot(origin)
     destination_express = get_expressway_spot(destination)
     via_express = get_expressway_spot(via)

@@ -1,32 +1,13 @@
 import os
-import time
 import datetime
 import urllib.parse
 from http.server import BaseHTTPRequestHandler
 import requests
 import googlemaps
 
-# --------------------------------------------------
-# メモリ上での重複送信防止ガード（インメモリキャッシュ）
-# --------------------------------------------------
-LAST_REQUESTS = {}  # {(origin, destination): timestamp}
-DUPLICATE_WINDOW_SECONDS = 10  # 同一ルートの再送信をブロックする時間（秒）
 
-
-def is_duplicate_request(origin, destination):
-    """短時間での同一ルートのリクエストを検知"""
-    now = time.time()
-    key = (origin, destination)
-    last_time = LAST_REQUESTS.get(key, 0)
-
-    if now - last_time < DUPLICATE_WINDOW_SECONDS:
-        return True
-
-    LAST_REQUESTS[key] = now
-    return False
-
-
-def get_realtime_route_info(gmaps_client, origin, destination, avoid=None):
+def get_leg_duration(gmaps_client, origin, destination, avoid=None):
+    """単一区間の所要時間（分）とGoogleマップ用パラメータを取得"""
     now = datetime.datetime.now()
     directions_result = gmaps_client.directions(
         origin=origin,
@@ -40,14 +21,12 @@ def get_realtime_route_info(gmaps_client, origin, destination, avoid=None):
         raise ValueError(f"'{origin}' から '{destination}' へのルートが見つかりませんでした。")
 
     leg = directions_result[0]["legs"][0]
+    duration_sec = leg.get("duration_in_traffic", leg.get("duration", {})).get("value", 0)
+    return round(duration_sec / 60)
 
-    if "duration_in_traffic" in leg:
-        duration_sec = leg["duration_in_traffic"]["value"]
-    else:
-        duration_sec = leg["duration"]["value"]
 
-    duration_min = round(duration_sec / 60)
-
+def make_map_url(origin, destination, via=None, avoid=None):
+    """Google Maps 開く用のURL生成"""
     base_url = "https://www.google.com/maps/dir/?"
     params = {
         "api": "1",
@@ -55,29 +34,47 @@ def get_realtime_route_info(gmaps_client, origin, destination, avoid=None):
         "destination": destination,
         "travelmode": "driving"
     }
+    if via:
+        params["waypoints"] = via
     if avoid:
         params["avoid"] = avoid
-    map_url = base_url + urllib.parse.urlencode(params)
-
-    return duration_min, map_url
+    return base_url + urllib.parse.urlencode(params)
 
 
-def calculate_realtime_traffic(origin="塩尻北IC", destination="諏訪IC"):
+def calculate_realtime_traffic(origin="塩尻北IC", destination="諏訪IC", via="岡谷IC"):
     api_key = os.environ.get("GOOGLE_API_KEY")
     if not api_key:
         raise ValueError("環境変数 GOOGLE_API_KEY が設定されていません。")
 
     gmaps = googlemaps.Client(key=api_key)
 
-    time_r1, url_r1 = get_realtime_route_info(gmaps, origin, destination, avoid=None)
-    time_r3, url_r3 = get_realtime_route_info(gmaps, origin, destination, avoid="tolls")
+    # --------------------------------------------------
+    # 4パターンのリアルタイム所要時間を算出
+    # --------------------------------------------------
+    # ① 全高速
+    time_r1 = get_leg_duration(gmaps, origin, destination, avoid=None)
+    url_r1 = make_map_url(origin, destination, avoid=None)
 
-    time_r2 = round((time_r1 + time_r3) / 2) if time_r3 > time_r1 else time_r1
-    url_r2 = url_r1
+    # ②-1 一般道(出発➔経由地) + 高速(経由地➔到着)
+    t2_1_part1 = get_leg_duration(gmaps, origin, via, avoid="tolls")
+    t2_1_part2 = get_leg_duration(gmaps, via, destination, avoid=None)
+    time_r2_1 = t2_1_part1 + t2_1_part2
+    url_r2_1 = make_map_url(origin, destination, via=via)
+
+    # ②-2 高速(出発➔経由地) + 一般道(経由地➔到着)
+    t2_2_part1 = get_leg_duration(gmaps, origin, via, avoid=None)
+    t2_2_part2 = get_leg_duration(gmaps, via, destination, avoid="tolls")
+    time_r2_2 = t2_2_part1 + t2_2_part2
+    url_r2_2 = make_map_url(origin, destination, via=via)
+
+    # ③ 全一般道
+    time_r3 = get_leg_duration(gmaps, origin, destination, avoid="tolls")
+    url_r3 = make_map_url(origin, destination, avoid="tolls")
 
     routes = [
         {"name": "①全高速", "time": time_r1, "url": url_r1},
-        {"name": "②一般道併用", "time": time_r2, "url": url_r2},
+        {"name": f"②-1一般道➔{via}➔高速", "time": time_r2_1, "url": url_r2_1},
+        {"name": f"②-2高速➔{via}➔一般道", "time": time_r2_2, "url": url_r2_2},
         {"name": "③全一般道", "time": time_r3, "url": url_r3}
     ]
 
@@ -93,10 +90,12 @@ def calculate_realtime_traffic(origin="塩尻北IC", destination="諏訪IC"):
     app_url = os.environ.get("APP_URL", "https://traffic-api-27wr.vercel.app")
 
     msg = (
-        f"🚗【リアルタイム移動時間見積り ({origin} ➔ {destination})】\n\n"
-        f"・全高速ルート: 約 {time_r1} 分\n"
-        f"・一般道併用ルート: 約 {time_r2} 分\n"
-        f"・全一般道ルート: 約 {time_r3} 分\n"
+        f"🚗【リアルタイム移動時間見積り ({origin} ➔ {destination})】\n"
+        f"経由地: {via}\n\n"
+        f"・①全高速ルート: 約 {time_r1} 分\n"
+        f"・②-1一般道➔{via}➔高速: 約 {time_r2_1} 分\n"
+        f"・②-2高速➔{via}➔一般道: 約 {time_r2_2} 分\n"
+        f"・③全一般道ルート: 約 {time_r3} 分\n"
         "----------------------\n"
         f"◇現在の最速ルートは、【{best_name}】です。\n"
         f"所要時間は約 {best_time} 分を見込んでいます。\n\n"
@@ -135,46 +134,59 @@ def send_line_push(text_content):
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
-            # 1. プリフェッチ遮断（ヘッダー判定）
+            # 1. プリフェッチ / favicon 遮断
             purpose = self.headers.get('Purpose') or self.headers.get('Sec-Purpose')
-            if purpose in ['prefetch', 'preview']:
-                self.send_response(204)
-                self.end_headers()
-                return
-
-            # 2. favicon.ico 遮断
             parsed_path = urllib.parse.urlparse(self.path)
-            if parsed_path.path == '/favicon.ico':
+            if purpose in ['prefetch', 'preview'] or parsed_path.path == '/favicon.ico':
                 self.send_response(204)
                 self.end_headers()
                 return
-
-            # 3. パラメータ解析
-            default_origin = os.environ.get("MAPS_ORIGIN", "塩尻北IC")
-            default_destination = os.environ.get("MAPS_DESTINATION", "諏訪IC")
 
             query_params = urllib.parse.parse_qs(parsed_path.query)
 
+            # 2. 実行確定フラグ（send=1）判定
+            should_send = query_params.get("send", ["0"])[0] == "1"
+
+            default_origin = os.environ.get("MAPS_ORIGIN", "塩尻北IC")
+            default_destination = os.environ.get("MAPS_DESTINATION", "諏訪IC")
+            default_via = os.environ.get("MAPS_VIA", "岡谷IC")
+
             origin = query_params.get("origin", [default_origin])[0]
             destination = query_params.get("destination", [default_destination])[0]
+            via = query_params.get("via", [default_via])[0]
 
             is_reverse = query_params.get("reverse", ["false"])[0].lower() in ["true", "1"]
             if is_reverse:
                 origin, destination = destination, origin
 
-            # --------------------------------------------------
-            # 4. 短時間の重複アクセス（2回目の呼び出し）をスキップ
-            # --------------------------------------------------
-            if is_duplicate_request(origin, destination):
+            # 送信フラグがない場合: JavaScriptで一度だけ再リクエスト
+            if not should_send:
+                current_url = self.path
+                sep = "&" if "?" in current_url else "?"
+                confirm_url = f"{current_url}{sep}send=1"
+
+                html = f"""
+                <html>
+                <head><meta charset="utf-8"><title>送信処理中</title></head>
+                <body style="font-family:sans-serif; text-align:center; padding-top:50px;">
+                    <h3>4ルートの交通情報を計算中...</h3>
+                    <p>自動的にLINEへ通知されます。</p>
+                    <script>
+                        setTimeout(function() {{
+                            window.location.replace("{confirm_url}");
+                        }}, 300);
+                    </script>
+                </body>
+                </html>
+                """
                 self.send_response(200)
                 self.send_header('Content-type', 'text/html; charset=utf-8')
                 self.end_headers()
-                duplicate_msg = "<html><body><pre style='font-size:16px;'>[重複リクエスト検知] 直前に送信済みのため、LINE送信をスキップしました。</pre></body></html>"
-                self.wfile.write(duplicate_msg.encode('utf-8'))
+                self.wfile.write(html.encode('utf-8'))
                 return
 
-            # 5. 交通情報計算 & LINE送信
-            msg = calculate_realtime_traffic(origin=origin, destination=destination)
+            # 送信フラグあり: 交通情報計算 & LINE送信
+            msg = calculate_realtime_traffic(origin=origin, destination=destination, via=via)
             line_status = send_line_push(msg)
             body_text = f"{msg}\n\n[Status]: {line_status}"
 

@@ -7,4 +7,4 @@ dependencies = [
 ]
 
 [tool.vercel]
-entrypoint = "api/traffic.py"
+entrypoint = "api.traffic:handler"

@@ -42,7 +42,7 @@ def make_map_url(origin, destination, via=None, avoid=None):
 
 
 def fix_ic_for_local_road(spot_name):
-    """IC名を一般道上の交差点・ポイントに置き換えて avoid='tolls' が無視されるのを防ぐ"""
+    """IC名を一般道上の交差点・ポイントに置き換えて有料道路への進入を防ぐ"""
     if spot_name.endswith("IC"):
         return f"{spot_name}交差点"
     return spot_name
@@ -60,25 +60,26 @@ def calculate_realtime_traffic(origin="塩尻北IC", destination="諏訪IC", via
     destination_local = fix_ic_for_local_road(destination)
     via_local = fix_ic_for_local_road(via)
 
-    # 1. ①全高速
+    # 1. ①全高速ルート
     time_r1 = get_leg_duration(gmaps, origin, destination, avoid=None)
     url_r1 = make_map_url(origin, destination, avoid=None)
 
     # 2. ②-1 前半一般道(origin➔via) + 後半高速(via➔destination)
-    t2_1_part1 = get_leg_duration(gmaps, origin_local, via_local, avoid="tolls")
+    # 有料道路と高速道路の両方を回避設定指定
+    t2_1_part1 = get_leg_duration(gmaps, origin_local, via_local, avoid=["tolls", "highways"])
     t2_1_part2 = get_leg_duration(gmaps, via, destination, avoid=None)
     time_r2_1 = t2_1_part1 + t2_1_part2
     url_r2_1 = make_map_url(origin, destination, via=via)
 
     # 3. ②-2 前半高速(origin➔via) + 後半一般道(via➔destination)
     t2_2_part1 = get_leg_duration(gmaps, origin, via, avoid=None)
-    t2_2_part2 = get_leg_duration(gmaps, via_local, destination_local, avoid="tolls")
+    t2_2_part2 = get_leg_duration(gmaps, via_local, destination_local, avoid=["tolls", "highways"])
     time_r2_2 = t2_2_part1 + t2_2_part2
     url_r2_2 = make_map_url(origin, destination, via=via)
 
-    # 4. ③全一般道（補正後の一般道スポット名を使用）
-    time_r3 = get_leg_duration(gmaps, origin_local, destination_local, avoid="tolls")
-    url_r3 = make_map_url(origin, destination, avoid="tolls")
+    # 4. ③全一般道ルート（補正された変数を適用）
+    time_r3 = get_leg_duration(gmaps, origin_local, destination_local, avoid=["tolls", "highways"])
+    url_r3 = make_map_url(origin_local, destination_local, avoid="tolls")
 
     label_2_1 = f"②-1一般道({origin}➔{via})➔高速({via}➔{destination})"
     label_2_2 = f"②-2高速({origin}➔{via})➔一般道({via}➔{destination})"

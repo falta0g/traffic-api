@@ -7,10 +7,7 @@ import googlemaps
 
 
 def get_realtime_route_info(gmaps_client, origin, destination, avoid=None):
-    """Google Maps Directions API を呼び出し、リアルタイム渋滞を考慮した所要時間を取得"""
     now = datetime.datetime.now()
-    
-    # Directions API リクエスト（departure_time='now' でリアルタイム交通情報を取得）
     directions_result = gmaps_client.directions(
         origin=origin,
         destination=destination,
@@ -20,11 +17,10 @@ def get_realtime_route_info(gmaps_client, origin, destination, avoid=None):
     )
 
     if not directions_result:
-        raise ValueError("ルート情報を取得できませんでした。")
+        raise ValueError(f"'{origin}' から '{destination}' へのルートが見つかりませんでした。")
 
     leg = directions_result[0]["legs"][0]
     
-    # 渋滞考慮の所要時間（秒）を取得（取得できない場合は通常の所要時間）
     if "duration_in_traffic" in leg:
         duration_sec = leg["duration_in_traffic"]["value"]
     else:
@@ -32,7 +28,6 @@ def get_realtime_route_info(gmaps_client, origin, destination, avoid=None):
 
     duration_min = round(duration_sec / 60)
     
-    # Google Maps Webブラウザ用URLの生成
     base_url = "https://www.google.com/maps/dir/?"
     params = {
         "api": "1",
@@ -50,18 +45,13 @@ def get_realtime_route_info(gmaps_client, origin, destination, avoid=None):
 def calculate_realtime_traffic(origin="塩尻北IC", destination="諏訪IC"):
     api_key = os.environ.get("GOOGLE_API_KEY")
     if not api_key:
-        raise ValueError("GOOGLE_API_KEY が環境変数に設定されていません。")
+        raise ValueError("環境変数 GOOGLE_API_KEY が設定されていません。")
 
     gmaps = googlemaps.Client(key=api_key)
 
-    # 1. 全高速ルート（制限なし）
     time_r1, url_r1 = get_realtime_route_info(gmaps, origin, destination, avoid=None)
-    
-    # 2. 全一般道ルート（有料道路を回避）
     time_r3, url_r3 = get_realtime_route_info(gmaps, origin, destination, avoid="tolls")
 
-    # 3. 一般道併用ルート（例として高速と一般道の平均値的推計または同等の情報）
-    # ※一般道併用は全高速ルートの検索結果を基準に保持
     time_r2 = round((time_r1 + time_r3) / 2) if time_r3 > time_r1 else time_r1
     url_r2 = url_r1
 
@@ -76,7 +66,6 @@ def calculate_realtime_traffic(origin="塩尻北IC", destination="諏訪IC"):
     best_name = best_route["name"]
     best_url = best_route["url"]
 
-    # 到着予定時刻の計算（JST: UTC+9）
     now_jst = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9)))
     eta = now_jst + datetime.timedelta(minutes=best_time)
     eta_str = eta.strftime("%Y-%m-%d %H:%M:%S")
@@ -140,7 +129,6 @@ class handler(BaseHTTPRequestHandler):
                 origin, destination = destination, origin
 
             msg = calculate_realtime_traffic(origin=origin, destination=destination)
-            
             line_status = send_line_push(msg)
             body_text = f"{msg}\n\n[Status]: {line_status}"
             
@@ -149,7 +137,8 @@ class handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body_text.encode('utf-8'))
         except Exception as e:
-            self.send_response(500)
+            error_msg = f"Runtime Error Details:\n{str(e)}"
+            self.send_response(200)
             self.send_header('Content-type', 'text/plain; charset=utf-8')
             self.end_headers()
-            self.wfile.write(f"Error: {str(e)}".encode('utf-8'))
+            self.wfile.write(error_msg.encode('utf-8'))

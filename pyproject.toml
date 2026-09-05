@@ -1,0 +1,10 @@
+[project]
+name = "traffic-api"
+version = "0.1.0"
+dependencies = [
+    "requests",
+    "googlemaps"
+]
+
+[tool.vercel]
+entrypoint = "api/traffic.py"

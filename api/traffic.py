@@ -1,9 +1,29 @@
 import os
+import time
 import datetime
 import urllib.parse
 from http.server import BaseHTTPRequestHandler
 import requests
 import googlemaps
+
+# --------------------------------------------------
+# メモリ上での重複送信防止ガード（インメモリキャッシュ）
+# --------------------------------------------------
+LAST_REQUESTS = {}  # {(origin, destination): timestamp}
+DUPLICATE_WINDOW_SECONDS = 10  # 同一ルートの再送信をブロックする時間（秒）
+
+
+def is_duplicate_request(origin, destination):
+    """短時間での同一ルートのリクエストを検知"""
+    now = time.time()
+    key = (origin, destination)
+    last_time = LAST_REQUESTS.get(key, 0)
+
+    if now - last_time < DUPLICATE_WINDOW_SECONDS:
+        return True
+
+    LAST_REQUESTS[key] = now
+    return False
 
 
 def get_realtime_route_info(gmaps_client, origin, destination, avoid=None):
@@ -20,14 +40,14 @@ def get_realtime_route_info(gmaps_client, origin, destination, avoid=None):
         raise ValueError(f"'{origin}' から '{destination}' へのルートが見つかりませんでした。")
 
     leg = directions_result[0]["legs"][0]
-    
+
     if "duration_in_traffic" in leg:
         duration_sec = leg["duration_in_traffic"]["value"]
     else:
         duration_sec = leg["duration"]["value"]
 
     duration_min = round(duration_sec / 60)
-    
+
     base_url = "https://www.google.com/maps/dir/?"
     params = {
         "api": "1",
@@ -91,10 +111,10 @@ def calculate_realtime_traffic(origin="塩尻北IC", destination="諏訪IC"):
 def send_line_push(text_content):
     token = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
     user_id = os.environ.get("LINE_USER_ID")
-    
+
     if not token or not user_id:
         return "LINE token or user ID is missing."
-        
+
     url = "https://api.line.me/v2/bot/message/push"
     headers = {
         "Content-Type": "application/json",
@@ -115,27 +135,21 @@ def send_line_push(text_content):
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
-            # --------------------------------------------------
-            # ガード1: Safariの事前読み込み（プリフェッチ）を検知してブロック
-            # --------------------------------------------------
+            # 1. プリフェッチ遮断（ヘッダー判定）
             purpose = self.headers.get('Purpose') or self.headers.get('Sec-Purpose')
             if purpose in ['prefetch', 'preview']:
-                self.send_response(204)  # No Content（LINE送信せず即座に終了）
+                self.send_response(204)
                 self.end_headers()
                 return
 
-            # --------------------------------------------------
-            # ガード2: ブラウザの favicon.ico 自動アクセスをブロック
-            # --------------------------------------------------
+            # 2. favicon.ico 遮断
             parsed_path = urllib.parse.urlparse(self.path)
             if parsed_path.path == '/favicon.ico':
                 self.send_response(204)
                 self.end_headers()
                 return
 
-            # --------------------------------------------------
-            # 通常処理（パラメータ解析＆送信）
-            # --------------------------------------------------
+            # 3. パラメータ解析
             default_origin = os.environ.get("MAPS_ORIGIN", "塩尻北IC")
             default_destination = os.environ.get("MAPS_DESTINATION", "諏訪IC")
 
@@ -143,20 +157,31 @@ class handler(BaseHTTPRequestHandler):
 
             origin = query_params.get("origin", [default_origin])[0]
             destination = query_params.get("destination", [default_destination])[0]
-            
+
             is_reverse = query_params.get("reverse", ["false"])[0].lower() in ["true", "1"]
             if is_reverse:
                 origin, destination = destination, origin
 
+            # --------------------------------------------------
+            # 4. 短時間の重複アクセス（2回目の呼び出し）をスキップ
+            # --------------------------------------------------
+            if is_duplicate_request(origin, destination):
+                self.send_response(200)
+                self.send_header('Content-type', 'text/html; charset=utf-8')
+                self.end_headers()
+                duplicate_msg = "<html><body><pre style='font-size:16px;'>[重複リクエスト検知] 直前に送信済みのため、LINE送信をスキップしました。</pre></body></html>"
+                self.wfile.write(duplicate_msg.encode('utf-8'))
+                return
+
+            # 5. 交通情報計算 & LINE送信
             msg = calculate_realtime_traffic(origin=origin, destination=destination)
             line_status = send_line_push(msg)
             body_text = f"{msg}\n\n[Status]: {line_status}"
-            
-            # HTML形式でレスポンスを返却（ファイルダウンロード化を防止）
+
             self.send_response(200)
             self.send_header('Content-type', 'text/html; charset=utf-8')
             self.end_headers()
-            
+
             html_content = f"<html><body><pre style='font-size:16px; white-space:pre-wrap;'>{body_text}</pre></body></html>"
             self.wfile.write(html_content.encode('utf-8'))
 

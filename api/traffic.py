@@ -3,14 +3,38 @@ import requests
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
 
-# 正しい環境変数名のみを指定して取得
-GOOGLE_MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY")
-LINE_NOTIFY_TOKEN = os.environ.get("LINE_NOTIFY_TOKEN") or os.environ.get("LINE_ACCESS_TOKEN")
+# 環境変数を自動検出する関数
+def get_env_variable(possible_keys):
+    for key in possible_keys:
+        val = os.environ.get(key)
+        if val:
+            return val
+    # 部分一致で探索（GOOGLE や MAPS、API_KEY を含む変数を拾う）
+    for env_key, env_val in os.environ.items():
+        if "GOOGLE" in env_key.upper() or "MAPS" in env_key.upper():
+            if "KEY" in env_key.upper() and env_val:
+                return env_val
+    return None
+
+def get_line_token():
+    for key in ["LINE_NOTIFY_TOKEN", "LINE_ACCESS_TOKEN", "LINE_TOKEN"]:
+        val = os.environ.get(key)
+        if val:
+            return val
+    for env_key, env_val in os.environ.items():
+        if "LINE" in env_key.upper() and env_val:
+            return env_val
+    return None
+
+GOOGLE_MAPS_API_KEY = get_env_variable(["GOOGLE_MAPS_API_KEY", "GOOGLE_API_KEY", "MAPS_API_KEY"])
+LINE_NOTIFY_TOKEN = get_line_token()
 
 def get_traffic_info(origin, destination):
     """Google Maps API から所要時間を取得"""
     if not GOOGLE_MAPS_API_KEY:
-        return None, "GOOGLE_MAPS_API_KEY が設定されていません。"
+        # 登録されている環境変数のキー名一覧を出力して原因特定を容易にする
+        keys_found = [k for k in os.environ.keys() if not k.startswith("VERCEL")]
+        return None, f"Google APIキーが見つかりません。現在検出された環境変数: {keys_found}"
 
     try:
         url = "https://maps.googleapis.com/maps/api/distancematrix/json"
@@ -52,7 +76,7 @@ def get_traffic_info(origin, destination):
 def send_line_notification(message):
     """LINE Notify へ通知を送信"""
     if not LINE_NOTIFY_TOKEN:
-        return False, "LINE_NOTIFY_TOKEN が設定されていません。"
+        return False, "LINEトークンが設定されていません。"
 
     try:
         url = "https://notify-api.line.me/api/notify"
@@ -110,7 +134,7 @@ class handler(BaseHTTPRequestHandler):
                 else:
                     result_text = f"LINE送信失敗:\n{line_msg}"
 
-            # レスポンス返却（HTML形式でダウンロードを防止）
+            # レスポンス返却
             self.send_response(200)
             self.send_header('Content-type', 'text/html; charset=utf-8')
             self.end_headers()

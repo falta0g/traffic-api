@@ -5,7 +5,7 @@ from http.server import BaseHTTPRequestHandler
 import requests
 import googlemaps
 
-# 1. 一般道検索用の座標マッピング（高速道路への吸い寄せ防止）
+# 一般道検索用の座標マッピング
 IC_TO_LOCAL_COORDS = {
     "諏訪IC": "35.9868,138.1256",    # 諏訪IC前交差点（国道20号）
     "岡谷IC": "36.0700,138.0460",    # 岡谷IC前交差点（国道20号/142号）
@@ -14,13 +14,20 @@ IC_TO_LOCAL_COORDS = {
     "伊北IC": "35.9421,137.9867"     # 伊北IC入口交差点
 }
 
-# 2. 高速道路本線上のピンポイント座標（下道への判定ブレを完全排除）
+# 高速道路本線上の座標マッピング（進行方向の本線上にピンポイント設定）
 IC_TO_EXPRESSWAY_COORDS = {
-    "諏訪IC": "35.9839,138.1219",    # 中央道本線（諏訪IC合流部）
-    "岡谷IC": "36.0664,138.0441",    # 長野道本線（岡谷IC合流部）
-    "塩尻北IC": "36.1565,137.9540",  # 長野道本線（塩尻北IC合流部）
-    "塩尻IC": "36.1231,137.9702",    # 長野道本線（塩尻IC合流部）
-    "伊北IC": "35.9395,137.9892"     # 中央道本線（伊北IC合流部）
+    # 塩尻北IC -> 諏訪IC（上り方向：名古屋・東京方面）
+    ("塩尻北IC", "諏訪IC"): {
+        "origin": "36.1565,137.9538",      # 塩尻北IC上り本線合流部
+        "destination": "36.0028,138.1290", # 諏訪IC本線付近
+        "via": "36.0664,138.0441"         # 岡谷IC本線
+    },
+    # 諏訪IC -> 塩尻北IC（下り方向：長野・松本方面）
+    ("諏訪IC", "塩尻北IC"): {
+        "origin": "36.0028,138.1290",      # 諏訪IC下り本線
+        "destination": "36.1565,137.9538", # 塩尻北IC下り本線合流部
+        "via": "36.0664,138.0441"         # 岡谷IC本線
+    }
 }
 
 
@@ -28,12 +35,6 @@ def get_local_spot(spot_name):
     """一般道検索用の地点を取得"""
     clean_name = spot_name.strip()
     return IC_TO_LOCAL_COORDS.get(clean_name, clean_name)
-
-
-def get_expressway_spot(spot_name):
-    """高速道路検索用の地点（本線座標）を取得"""
-    clean_name = spot_name.strip()
-    return IC_TO_EXPRESSWAY_COORDS.get(clean_name, clean_name)
 
 
 def get_leg_duration(gmaps_client, origin, destination, avoid=None):
@@ -56,7 +57,7 @@ def get_leg_duration(gmaps_client, origin, destination, avoid=None):
 
 
 def make_map_url(origin, destination, via=None, avoid=None):
-    """Google Maps URL生成"""
+    """Google Maps URL生成（表示・共有用は名称を使用）"""
     base_url = "https://www.google.com/maps/dir/?"
     params = {
         "api": "1",
@@ -78,32 +79,42 @@ def calculate_realtime_traffic(origin="塩尻北IC", destination="諏訪IC", via
 
     gmaps = googlemaps.Client(key=api_key)
 
-    # 用途別の地点（座標）を作成
-    origin_express = get_expressway_spot(origin)
-    destination_express = get_expressway_spot(destination)
-    via_express = get_expressway_spot(via)
+    # 1. 高速道路用の検索座標を取得
+    pair_key = (origin.strip(), destination.strip())
+    if pair_key in IC_TO_EXPRESSWAY_COORDS:
+        exp_coords = IC_TO_EXPRESSWAY_COORDS[pair_key]
+        origin_express = exp_coords["origin"]
+        destination_express = exp_coords["destination"]
+        via_express = exp_coords["via"]
+    else:
+        # 万が一定義外の区間の場合はIC名にプレフィックスを付与して本線優先探索
+        origin_express = f"side_of_road:{origin.strip()}"
+        destination_express = f"side_of_road:{destination.strip()}"
+        via_express = f"side_of_road:{via.strip()}"
 
+    # 2. 一般道用の検索座標を取得
     origin_local = get_local_spot(origin)
     destination_local = get_local_spot(destination)
     via_local = get_local_spot(via)
 
-    # 1. ①全高速ルート（本線座標間検索）
+    # --- ルート計算 ---
+    # ①全高速ルート
     time_r1 = get_leg_duration(gmaps, origin_express, destination_express, avoid=None)
     url_r1 = make_map_url(origin, destination, avoid=None)
 
-    # 2. ②-1 前半一般道(origin➔via) + 後半高速(via➔destination)
+    # ②-1 前半一般道(origin➔via) + 後半高速(via➔destination)
     t2_1_part1 = get_leg_duration(gmaps, origin_local, via_local, avoid=["tolls", "highways"])
     t2_1_part2 = get_leg_duration(gmaps, via_express, destination_express, avoid=None)
     time_r2_1 = t2_1_part1 + t2_1_part2
     url_r2_1 = make_map_url(origin, destination, via=via)
 
-    # 3. ②-2 前半高速(origin➔via) + 後半一般道(via➔destination)
+    # ②-2 前半高速(origin➔via) + 後半一般道(via➔destination)
     t2_2_part1 = get_leg_duration(gmaps, origin_express, via_express, avoid=None)
     t2_2_part2 = get_leg_duration(gmaps, via_local, destination_local, avoid=["tolls", "highways"])
     time_r2_2 = t2_2_part1 + t2_2_part2
     url_r2_2 = make_map_url(origin, destination, via=via)
 
-    # 4. ③全一般道ルート
+    # ③全一般道ルート
     time_r3 = get_leg_duration(gmaps, origin_local, destination_local, avoid=["tolls", "highways"])
     url_r3 = make_map_url(origin, destination, avoid="tolls")
 

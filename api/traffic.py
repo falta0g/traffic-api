@@ -6,33 +6,27 @@ import requests
 import googlemaps
 
 
-def get_route_info(gmaps_client, origin, destination, avoid=None, via=None):
-    """Google Maps API から所要時間（分）とマップURLを一括取得"""
+def get_leg_duration(gmaps_client, origin, destination, avoid=None):
+    """単一区間の所要時間（分）を取得"""
     now = datetime.datetime.now()
-    waypoints = [f"via:{via}"] if via else None
-
     directions_result = gmaps_client.directions(
         origin=origin,
         destination=destination,
         mode="driving",
         departure_time=now,
-        avoid=avoid,
-        waypoints=waypoints
+        avoid=avoid
     )
 
     if not directions_result:
         raise ValueError(f"'{origin}' から '{destination}' へのルートが見つかりませんでした。")
 
-    leg_sum_sec = 0
-    for leg in directions_result[0]["legs"]:
-        if "duration_in_traffic" in leg:
-            leg_sum_sec += leg["duration_in_traffic"]["value"]
-        else:
-            leg_sum_sec += leg["duration"]["value"]
+    leg = directions_result[0]["legs"][0]
+    duration_sec = leg.get("duration_in_traffic", leg.get("duration", {})).get("value", 0)
+    return round(duration_sec / 60)
 
-    duration_min = round(leg_sum_sec / 60)
 
-    # Google Maps URL生成
+def make_map_url(origin, destination, via=None, avoid=None):
+    """Google Maps URL生成"""
     base_url = "https://www.google.com/maps/dir/?"
     params = {
         "api": "1",
@@ -44,10 +38,14 @@ def get_route_info(gmaps_client, origin, destination, avoid=None, via=None):
         params["waypoints"] = via
     if avoid:
         params["avoid"] = avoid
+    return base_url + urllib.parse.urlencode(params)
 
-    map_url = base_url + urllib.parse.urlencode(params)
 
-    return duration_min, map_url
+def fix_ic_for_local_road(spot_name):
+    """IC名を一般道上の交差点・ポイントに置き換えて avoid='tolls' が無視されるのを防ぐ"""
+    if spot_name.endswith("IC"):
+        return f"{spot_name}交差点"
+    return spot_name
 
 
 def calculate_realtime_traffic(origin="塩尻北IC", destination="諏訪IC", via="岡谷IC"):
@@ -57,27 +55,31 @@ def calculate_realtime_traffic(origin="塩尻北IC", destination="諏訪IC", via
 
     gmaps = googlemaps.Client(key=api_key)
 
+    # 一般道検索用のスポット名補正（"諏訪IC" -> "諏訪IC交差点"）
+    origin_local = fix_ic_for_local_road(origin)
+    destination_local = fix_ic_for_local_road(destination)
+    via_local = fix_ic_for_local_road(via)
+
     # 1. ①全高速
-    time_r1, url_r1 = get_route_info(gmaps, origin, destination, avoid=None)
+    time_r1 = get_leg_duration(gmaps, origin, destination, avoid=None)
+    url_r1 = make_map_url(origin, destination, avoid=None)
 
-    # 2. ②-1 一般道（前半）+ 高速（後半）
-    # 出発地から経由地までを一般道（`avoid="tolls"`）で計算し、後半は高速接続
-    time_part1, _ = get_route_info(gmaps, origin, via, avoid="tolls")
-    time_part2, _ = get_route_info(gmaps, via, destination, avoid=None)
-    time_r2_1 = time_part1 + time_part2
-    url_r2_1 = f"https://www.google.com/maps/dir/?api=1&origin={urllib.parse.quote(origin)}&destination={urllib.parse.quote(destination)}&waypoints={urllib.parse.quote(via)}&travelmode=driving"
+    # 2. ②-1 前半一般道(origin➔via) + 後半高速(via➔destination)
+    t2_1_part1 = get_leg_duration(gmaps, origin_local, via_local, avoid="tolls")
+    t2_1_part2 = get_leg_duration(gmaps, via, destination, avoid=None)
+    time_r2_1 = t2_1_part1 + t2_1_part2
+    url_r2_1 = make_map_url(origin, destination, via=via)
 
-    # 3. ②-2 高速（前半）+ 一般道（後半）
-    # 出発地から経由地までを高速で計算し、経由地から到着地を一般道（`avoid="tolls"`）で計算
-    time_part3, _ = get_route_info(gmaps, origin, via, avoid=None)
-    time_part4, _ = get_route_info(gmaps, via, destination, avoid="tolls")
-    time_r2_2 = time_part3 + time_part4
-    url_r2_2 = url_r2_1
+    # 3. ②-2 前半高速(origin➔via) + 後半一般道(via➔destination)
+    t2_2_part1 = get_leg_duration(gmaps, origin, via, avoid=None)
+    t2_2_part2 = get_leg_duration(gmaps, via_local, destination_local, avoid="tolls")
+    time_r2_2 = t2_2_part1 + t2_2_part2
+    url_r2_2 = make_map_url(origin, destination, via=via)
 
-    # 4. ③全一般道
-    time_r3, url_r3 = get_route_info(gmaps, origin, destination, avoid="tolls")
+    # 4. ③全一般道（補正後の一般道スポット名を使用）
+    time_r3 = get_leg_duration(gmaps, origin_local, destination_local, avoid="tolls")
+    url_r3 = make_map_url(origin, destination, avoid="tolls")
 
-    # IC指定の揺らぎを吸収（"岡谷IC" 単体を "岡谷IC交差点" 等に補正して誤ルーティングを防止）
     label_2_1 = f"②-1一般道({origin}➔{via})➔高速({via}➔{destination})"
     label_2_2 = f"②-2高速({origin}➔{via})➔一般道({via}➔{destination})"
 
@@ -144,7 +146,6 @@ def send_line_push(text_content):
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
-            # 1. プリフェッチ / favicon 遮断
             purpose = self.headers.get('Purpose') or self.headers.get('Sec-Purpose')
             parsed_path = urllib.parse.urlparse(self.path)
             if purpose in ['prefetch', 'preview'] or parsed_path.path == '/favicon.ico':
@@ -154,7 +155,6 @@ class handler(BaseHTTPRequestHandler):
 
             query_params = urllib.parse.parse_qs(parsed_path.query)
 
-            # 2. 実行確定フラグ（send=1）判定
             should_send = query_params.get("send", ["0"])[0] == "1"
 
             default_origin = os.environ.get("MAPS_ORIGIN", "塩尻北IC")
@@ -169,7 +169,6 @@ class handler(BaseHTTPRequestHandler):
             if is_reverse:
                 origin, destination = destination, origin
 
-            # 送信フラグがない場合: JavaScriptで一度だけ再リクエスト
             if not should_send:
                 current_url = self.path
                 sep = "&" if "?" in current_url else "?"
@@ -195,7 +194,6 @@ class handler(BaseHTTPRequestHandler):
                 self.wfile.write(html.encode('utf-8'))
                 return
 
-            # 送信フラグあり: 交通情報計算 & LINE送信
             msg = calculate_realtime_traffic(origin=origin, destination=destination, via=via)
             line_status = send_line_push(msg)
             body_text = f"{msg}\n\n[Status]: {line_status}"
